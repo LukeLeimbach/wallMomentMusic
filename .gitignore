@@ -1,3 +1,4 @@
 .venv/
 .env
+.git/
 ffmpeg-2023-02-04-git-bdc76f467f-full_build/

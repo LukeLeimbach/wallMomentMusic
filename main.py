@@ -1,10 +1,13 @@
-import discord
 from discord.ext import commands
+from dotenv import load_dotenv
+import discord
 import youtube_dl
 import asyncio
 import nacl
 import ffmpeg
 import os
+import pickle
+import queue
 
 
 # Set up the discord client   FIXME: Production Bot shouldn't have all intents
@@ -12,8 +15,14 @@ intents = discord.Intents.all()
 intents.members = True
 client = commands.Bot(command_prefix='!', intents=intents)
 
-# Bot Discord ID -Not Sensitive-
+# Bot Discord ID    NOTE: -Not Sensitive-
 botId = "924079497412767844"
+
+# Global Variables
+pklfile_textChannel = "textChannel"
+pklfile_maxQue = "maxQue"
+maxQue = 100
+textChannel = 0
 
 # Set up youtube_dl options for playing audio
 ydl_opts = {
@@ -25,9 +34,67 @@ ydl_opts = {
     }],
 }
 
+
 @client.event
 async def on_ready():
-    print(f'Logged in as {client.user}')
+    global maxQue
+    global textChannel
+
+    # Retrieve Max Que
+    try:
+        maxQue = load(pklfile_maxQue)
+        print(f"Max que: {maxQue}")
+    except FileNotFoundError as e:
+        print("Unable to load Max Que. Default set to 100. New Pickle Dumped.")
+        maxQue = 100
+        dump(maxQue, pklfile_maxQue)
+
+    try:
+        textChannel = getTextChannel()
+        print(f"Text Channel: {textChannel}")
+    except FileNotFoundError as e:
+        print("Unable to load Text Channel. A new text channel must be set.")
+    
+    print(f'{client.user} is ready.')
+
+# Sets channel ID and pickles it
+@client.command()
+async def set_channel(ctx):
+    global textChannel
+
+    textChannel = ctx.message.channel.id
+    dump(textChannel, pklfile_textChannel)
+
+    # FIXME: Can remove for production
+    print(f"Text Channel set to {getTextChannel()} by {ctx.message.author.display_name}.")
+
+
+@client.command()
+async def set_max_que(ctx, m):
+    if ctx.message.channel.id == getTextChannel():
+        # Only accept integers
+        try:
+            m = int(m)
+        except ValueError as e:
+            print(f"WARNING: Max que attempted to be set to {m} by {ctx.author.display_name}.\nError:\n{e}")
+            await ctx.send(f"> Max que must be number `(0 for infinite)`, not `{m}`.")
+            return
+        
+        # Check for bounds of que limit
+        if m == 0:
+            m = 100
+        elif m < 0:
+            print(f"WARNING: Max que attempted to be set to {m} by {ctx.author.display_name}.\nError:\nNegative value.")
+            await ctx.send(f"> Max que must be positive, not `{m}`.")
+            return
+        elif m > 100:
+            m = 100
+
+        # Pickle que and respond
+        dump(m, pklfile_maxQue)
+        print(f"Max Que has been set to {m} by {ctx.message.author.display_name}")
+        await ctx.send(f"> Max que has been set to `{m}`.")
+
 
 @client.command()
 async def play(ctx, *, song: str):
@@ -60,7 +127,33 @@ async def play(ctx, *, song: str):
         # Disconnect from the voice channel
         await vc.disconnect()
     else:
-        await ctx.send("You are not in a voice channel.")
+        await ctx.send("> You are not in a voice channel.")
+
+
+# Pickle Dump
+def dump(obj, file):
+    ofile = open(file, "wb")
+    pickle.dump(obj, ofile)
+    ofile.close()
+
+
+# Pickle Read
+def load(file):
+    ifile = open(file, "rb")
+    try:
+        o = pickle.load(ifile)
+    except pickle.UnpicklingError as e:
+        print(f"Unable to unpickle file {file} due to corruption or security violation.")
+    ifile.close()
+    return o
+
+
+def getTextChannel():
+    return load(pklfile_textChannel)
+
+
+# Load .env File
+load_dotenv()
 
 # Run the bot
 TOKEN = os.getenv("TOKEN")

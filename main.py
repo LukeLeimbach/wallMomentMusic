@@ -4,21 +4,19 @@ import discord, asyncio, nacl, ffmpeg, os, pickle, threading, youtube_dl, queue,
 import youtube_dl, queue
 
 
-
 # Set up the discord client   FIXME: Production Bot shouldn't have all intents
 intents = discord.Intents.all()
 intents.members = True
 client = commands.Bot(command_prefix='!', intents=intents)
 
 # Bot Discord ID    NOTE: -Not Sensitive-
-botId = "924079497412767844"
+botId = 924079497412767844
 
 # Global Variables
 pklfile_textChannel = "textChannel"
 pklfile_maxQue = "maxQue"
 maxQue = 100
 textChannel = 0
-rawQueryQue = queue.Queue()
 ytLinkQue = queue.Queue()
 
 
@@ -98,13 +96,14 @@ async def set_max_que(ctx, m):
 @client.event
 async def on_message(message):
     global textChannel
-    global rawQueryQue
+    global ytLinkQue
 
     # Converts content to youtube link and adds to queue
     content = message.content
-    if message.channel.id == textChannel:
-        if not content.startswith("!"):
-            print(queryToYtLink(content))
+    if message.author.id != botId:
+        if message.channel.id == textChannel:
+            if not content.startswith("!"):
+                ytLinkQue.put_nowait(queryToYtLink(content))
 
     await client.process_commands(message)
 

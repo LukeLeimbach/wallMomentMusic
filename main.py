@@ -1,13 +1,8 @@
 from discord.ext import commands
 from dotenv import load_dotenv
-import discord
-import youtube_dl
-import asyncio
-import nacl
-import ffmpeg
-import os
-import pickle
-import queue
+import discord, asyncio, nacl, ffmpeg, os, pickle, threading, youtube_dl, queue, re, urllib.request
+import youtube_dl, queue
+
 
 
 # Set up the discord client   FIXME: Production Bot shouldn't have all intents
@@ -23,6 +18,9 @@ pklfile_textChannel = "textChannel"
 pklfile_maxQue = "maxQue"
 maxQue = 100
 textChannel = 0
+rawQueryQue = queue.Queue()
+ytLinkQue = queue.Queue()
+
 
 # Set up youtube_dl options for playing audio
 ydl_opts = {
@@ -96,9 +94,23 @@ async def set_max_que(ctx, m):
         await ctx.send(f"> Max que has been set to `{m}`.")
 
 
+# Waits for message to add to que
+@client.event
+async def on_message(message):
+    global textChannel
+    global rawQueryQue
+
+    # Converts content to youtube link and adds to queue
+    content = message.content
+    if message.channel.id == textChannel:
+        if not content.startswith("!"):
+            print(queryToYtLink(content))
+
+    await client.process_commands(message)
+
+
 @client.command()
 async def play(ctx, *, song: str):
-    print("Command called")
     # Get the voice channel that the user requesting the song is in
     channel = ctx.author.voice.channel
     if channel is not None:
@@ -150,6 +162,12 @@ def load(file):
 
 def getTextChannel():
     return load(pklfile_textChannel)
+
+
+def queryToYtLink(query):
+    html = urllib.request.urlopen("https://www.youtube.com/results?search_query=" + query.replace(" ", ""))
+    video_ids = re.findall(r"watch\?v=(\S{11})", html.read().decode())
+    return "https://www.youtube.com/watch?v=" + video_ids[0]
 
 
 # Load .env File

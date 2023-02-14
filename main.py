@@ -160,10 +160,12 @@ def load(file):
     return o
 
 
+# Returns set text channel for bot
 def getTextChannel():
     return load(pklfile_textChannel)
 
 
+# Converts query to youtube link   NOTE: could add functionality to optimize
 def queryToYtLink(query):
     html = urllib.request.urlopen("https://www.youtube.com/results?search_query=" + query.replace(" ", ""))
     video_ids = re.findall(r"watch\?v=(\S{11})", html.read().decode())

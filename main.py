@@ -18,6 +18,8 @@ pklfile_maxQue = "maxQue"
 maxQue = 100
 textChannel = 0
 ytLinkQue = queue.Queue()
+mainEmbed = discord.Embed()
+currentlyPlaying = False
 
 
 # Set up youtube_dl options for playing audio
@@ -52,6 +54,11 @@ async def on_ready():
         print("Unable to load Text Channel. A new text channel must be set.")
     
     print(f'{client.user} is ready.')
+
+    # while True:
+    #     print("hello")
+    #     await asyncio.sleep(5)
+
 
 # Sets channel ID and pickles it
 @client.command()
@@ -97,13 +104,30 @@ async def set_max_que(ctx, m):
 async def on_message(message):
     global textChannel
     global ytLinkQue
+    global mainEmbed
 
     # Converts content to youtube link and adds to queue
     content = message.content
-    if message.author.id != botId:
+
+    # Message must not be from bot
+    if not message.author.bot:
+        # Message must be in designated text channel
         if message.channel.id == textChannel:
+            # Message must not be a command
             if not content.startswith("!"):
-                ytLinkQue.put_nowait(queryToYtLink(content))
+                # Member must be connected to a voice channel
+                try:
+                    voiceChannel = message.author.voice.channel
+                except AttributeError as e:
+                    voiceChannel = None
+                    await message.channel.send(f"> {message.author.display_name}, you must be connected to a voice channel to add songs to the que.")
+
+                if voiceChannel is not None:
+                    # Adds youtube link to que as [link, author]
+                    ytLink = queryToYtLink(content)
+                    await message.channel.send(ytLink)               # NOTE: added for testing
+
+                    ytLinkQue.put_nowait([ytLink, message.author])       
 
     await client.process_commands(message)
 
@@ -127,18 +151,35 @@ async def play(ctx, *, song: str):
             url = info['formats'][0]['url']
 
         # Play the song
-        vc.play(discord.FFmpegPCMAudio(url), after=lambda e: print('done', e))
         vc.source = discord.PCMVolumeTransformer(vc.source)
-        vc.source.volume = 0.07
+        vc.source.volume = 0.2
+        vc.play(discord.FFmpegPCMAudio(url), after=lambda e: print('done', e))
 
         # Wait until the song has finished playing
+        currentlyPlaying = True
         while vc.is_playing():
             await asyncio.sleep(1)
+        currentlyPlaying = False
 
         # Disconnect from the voice channel
         await vc.disconnect()
     else:
         await ctx.send("> You are not in a voice channel.")
+
+
+# Begins playing music
+async def play_music():
+    return
+
+
+# Creates embed
+def create_main_embed(title=None, url=None):                                                  # FIXME: Left off here for the night
+    return
+
+
+# Returns if music is playing
+def isMusicPlaying():
+    return currentlyPlaying
 
 
 # Pickle Dump

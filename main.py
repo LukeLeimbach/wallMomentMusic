@@ -25,6 +25,8 @@ currentlyPlaying = False
 # Set up youtube_dl options for playing audio
 ydl_opts = {
     'format': 'bestaudio/best',
+    'options': '-vn',
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 1',
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
@@ -55,9 +57,13 @@ async def on_ready():
     
     print(f'{client.user} is ready.')
 
-    # while True:
-    #     print("hello")
-    #     await asyncio.sleep(5)
+    # Check every second for new music que
+    while True:
+        # If que is not empty and there is no music playing, play music
+        if not ytLinkQue.empty() and not isMusicPlaying():
+            await play()
+
+        await asyncio.sleep(1)
 
 
 # Sets channel ID and pickles it
@@ -123,25 +129,24 @@ async def on_message(message):
                     await message.channel.send(f"> {message.author.display_name}, you must be connected to a voice channel to add songs to the que.")
 
                 if voiceChannel is not None:
+                    # Passes this to play() if the que is empty and no music is playing
+                    if ytLinkQue.empty() and not isMusicPlaying():
+                        ytLinkQue.put(message)
+                    
                     # Adds youtube link to que as [link, author]
                     ytLink = queryToYtLink(content)
                     await message.channel.send(ytLink)               # NOTE: added for testing
 
-                    ytLinkQue.put_nowait([ytLink, message.author])       
+                    ytLinkQue.put([ytLink, message.author])
 
     await client.process_commands(message)
 
-
+# --------------------------------------------------------------------------------------------------------------------------------------------
 @client.command()
-async def play(ctx, *, song: str):
+async def _play(ctx, *, song: str):
     # Get the voice channel that the user requesting the song is in
     channel = ctx.author.voice.channel
     if channel is not None:
-        # Join the voice channel
-        mId = []
-        for m in channel.members:
-            mId.append(m.id)
-
         # if not client.is_connected():
         vc = await channel.connect() # FIXME: Shid aint workin
 
@@ -156,30 +161,85 @@ async def play(ctx, *, song: str):
         vc.play(discord.FFmpegPCMAudio(url), after=lambda e: print('done', e))
 
         # Wait until the song has finished playing
-        currentlyPlaying = True
+        musicPlay()
         while vc.is_playing():
             await asyncio.sleep(1)
-        currentlyPlaying = False
+        musicStop()
 
         # Disconnect from the voice channel
         await vc.disconnect()
     else:
         await ctx.send("> You are not in a voice channel.")
+# --------------------------------------------------------------------------------------------------------------------------------------------
 
 
-# Begins playing music
-async def play_music():
-    return
+# NOTE: Process of getting from query to que
+# Once a query get sent in bot channel (assuming its for music),
+# if its the first in the que, the message object is passed to play(),
+# otherwise, the que is expanded.
+#
+# Once there is music in the que for the first time, the play() function
+# is called which takes the message to do all the playing stuff.
+# 
+# When it's done playing, currently playing is false
+
+
+# Begins playing music | NOTE: play() will only get called when que is not empty and music is not playing
+async def play():
+    print("Play Called")
+    musicPlay()
+    # Get message object from initial request
+    message = ytLinkQue.get()
+    voiceChannel = message.author.voice.channel
+    vc = await voiceChannel.connect()
+    
+    while not ytLinkQue.empty():
+        # FIXME: Update embed here
+
+        # Get current song
+        currentSong = ytLinkQue.get()[0]
+
+        # Get song from Youtube
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(currentSong, download=False)
+            url = info['formats'][0]['url']
+
+        # Play Song
+        vc.play(discord.FFmpegPCMAudio(url), after=lambda e: print('done', e)) # FIXME: Add volume command
+
+        # Wait until the song has finished playing
+        while vc.is_playing():
+            await asyncio.sleep(1)
+    
+    await vc.disconnect()
+    musicStop()
 
 
 # Creates embed
-def create_main_embed(title=None, url=None):                                                  # FIXME: Left off here for the night
+def create_main_embed():
     return
 
 
-# Returns if music is playing
+# Returns boolean if music is playing
 def isMusicPlaying():
     return currentlyPlaying
+
+
+# Starts music playing
+def musicPlay():
+    global currentlyPlaying
+
+    currentlyPlaying = True
+
+
+# Stops music playing
+def musicStop():
+    global currentlyPlaying
+
+    currentlyPlaying = False
+
+
+# FOR PAUSE: https://discordpy.readthedocs.io/en/stable/api.html#discord.Message
 
 
 # Pickle Dump

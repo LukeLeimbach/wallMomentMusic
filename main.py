@@ -23,15 +23,19 @@ currentlyPlaying = False
 
 
 # Set up youtube_dl options for playing audio
-ydl_opts = {
+ydl_format_opts = {
     'format': 'bestaudio/best',
-    'options': '-vn',
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 1',
+    'prefer_ffmpeg': True,
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
         'preferredquality': '192',
     }],
+}
+
+ydl_opts = {
+    'options': '-vn',
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
 }
 
 
@@ -131,6 +135,7 @@ async def on_message(message):
                 if voiceChannel is not None:
                     # Passes this to play() if the que is empty and no music is playing
                     if ytLinkQue.empty() and not isMusicPlaying():
+                        print("Passing message object")
                         ytLinkQue.put(message)
                     
                     # Adds youtube link to que as [link, author]
@@ -141,38 +146,8 @@ async def on_message(message):
 
     await client.process_commands(message)
 
-# --------------------------------------------------------------------------------------------------------------------------------------------
-@client.command()
-async def _play(ctx, *, song: str):
-    # Get the voice channel that the user requesting the song is in
-    channel = ctx.author.voice.channel
-    if channel is not None:
-        # if not client.is_connected():
-        vc = await channel.connect() # FIXME: Shid aint workin
 
-        # Download the song using youtube_dl
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(song, download=False)
-            url = info['formats'][0]['url']
-
-        # Play the song
-        vc.source = discord.PCMVolumeTransformer(vc.source)
-        vc.source.volume = 0.2
-        vc.play(discord.FFmpegPCMAudio(url), after=lambda e: print('done', e))
-
-        # Wait until the song has finished playing
-        musicPlay()
-        while vc.is_playing():
-            await asyncio.sleep(1)
-        musicStop()
-
-        # Disconnect from the voice channel
-        await vc.disconnect()
-    else:
-        await ctx.send("> You are not in a voice channel.")
-# --------------------------------------------------------------------------------------------------------------------------------------------
-
-
+#
 # NOTE: Process of getting from query to que
 # Once a query get sent in bot channel (assuming its for music),
 # if its the first in the que, the message object is passed to play(),
@@ -182,6 +157,7 @@ async def _play(ctx, *, song: str):
 # is called which takes the message to do all the playing stuff.
 # 
 # When it's done playing, currently playing is false
+#
 
 
 # Begins playing music | NOTE: play() will only get called when que is not empty and music is not playing
@@ -190,22 +166,31 @@ async def play():
     musicPlay()
     # Get message object from initial request
     message = ytLinkQue.get()
+    print(f"Message object recieved: {message}")
     voiceChannel = message.author.voice.channel
     vc = await voiceChannel.connect()
+    songsPlayed = 0
     
     while not ytLinkQue.empty():
         # FIXME: Update embed here
 
         # Get current song
         currentSong = ytLinkQue.get()[0]
+        print(f"Current song: {currentSong}")
 
         # Get song from Youtube
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(currentSong, download=False)
-            url = info['formats'][0]['url']
+        with youtube_dl.YoutubeDL(ydl_format_opts) as ydl:
+            try:
+                info = ydl.extract_info(currentSong, download=False)
+                song = info['formats'][0]['url']
+            except youtube_dl.DownloadError as e:                                  # FIXME: Getting youtube_dl error here consistently
+                print(f"Error downloading song. Error with youtube_dl.\n{e}")
+                await vc.disconnect()
+                musicStop()
+                return
 
         # Play Song
-        vc.play(discord.FFmpegPCMAudio(url), after=lambda e: print('done', e)) # FIXME: Add volume command
+        vc.play(discord.FFmpegPCMAudio(song, **ydl_opts), after=lambda e: print('done', e)) # FIXME: Add volume command
 
         # Wait until the song has finished playing
         while vc.is_playing():

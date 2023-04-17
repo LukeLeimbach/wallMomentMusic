@@ -1,12 +1,22 @@
+#!/usr/bin/env python
 from discord.ext import commands
 from dotenv import load_dotenv
-import discord, asyncio, nacl, ffmpeg, os, pickle, threading, youtube_dl, queue, re, urllib.request
-import youtube_dl, queue
+# import yt_dlp as youtube_dl
+import yt_dlp as youtube_dl
+import discord
+import asyncio
+import nacl
+import ffmpeg
+import os
+import pickle
+import threading
+import re
+import urllib.request
+import queue
 
 
 # Set up the discord client   FIXME: Production Bot shouldn't have all intents
 intents = discord.Intents.all()
-intents.members = True
 client = commands.Bot(command_prefix='!', intents=intents)
 
 # Bot Discord ID    NOTE: -Not Sensitive-
@@ -21,11 +31,9 @@ ytLinkQue = queue.Queue()
 mainEmbed = discord.Embed()
 currentlyPlaying = False
 
-
 # Set up youtube_dl options for playing audio
-ydl_format_opts = {
+ydl_opts = {
     'format': 'bestaudio/best',
-    'prefer_ffmpeg': True,
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
@@ -33,10 +41,10 @@ ydl_format_opts = {
     }],
 }
 
-ydl_opts = {
+FFMPEG_OPTIONS = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-}
+    }
 
 
 @client.event
@@ -68,6 +76,11 @@ async def on_ready():
             await play()
 
         await asyncio.sleep(1)
+
+
+@client.command()
+async def que(ctx):
+    await ctx.send(ytLinkQue.qsize())
 
 
 # Sets channel ID and pickles it
@@ -136,13 +149,13 @@ async def on_message(message):
                     # Passes this to play() if the que is empty and no music is playing
                     if ytLinkQue.empty() and not isMusicPlaying():
                         print("Passing message object")
-                        ytLinkQue.put(message)
+                        ytLinkQue.put_nowait(message)
                     
                     # Adds youtube link to que as [link, author]
                     ytLink = queryToYtLink(content)
-                    await message.channel.send(ytLink)               # NOTE: added for testing
+                    # await message.channel.send(ytLink)               # NOTE: added for testing
 
-                    ytLinkQue.put([ytLink, message.author])
+                    ytLinkQue.put_nowait([ytLink, message.author])
 
     await client.process_commands(message)
 
@@ -165,39 +178,38 @@ async def play():
     print("Play Called")
     musicPlay()
     # Get message object from initial request
-    message = ytLinkQue.get()
-    print(f"Message object recieved: {message}")
-    voiceChannel = message.author.voice.channel
-    vc = await voiceChannel.connect()
+    message = ytLinkQue.get_nowait()
+    channel = message.author.voice.channel
+    voice = await channel.connect()
     songsPlayed = 0
     
-    while not ytLinkQue.empty():
+    while True:
+        print("TOP OF WHILE")
         # FIXME: Update embed here
 
         # Get current song
-        currentSong = ytLinkQue.get()[0]
-        print(f"Current song: {currentSong}")
+        currentSong = ytLinkQue.get_nowait()[0]
+        # print(f"Current song: {currentSong}")
 
         # Get song from Youtube
-        with youtube_dl.YoutubeDL(ydl_format_opts) as ydl:
-            try:
-                info = ydl.extract_info(currentSong, download=False)
-                song = info['formats'][0]['url']
-            except youtube_dl.DownloadError as e:                                  # FIXME: Getting youtube_dl error here consistently
-                print(f"Error downloading song. Error with youtube_dl.\n{e}")
-                await vc.disconnect()
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            # song = ydl.download(currentSong)
+            # print("Extract Info")
+            info = ydl.extract_info(currentSong, download=False)
+            song = info['url']
+
+            # Play Song
+            voice.play(discord.FFmpegPCMAudio(song, **FFMPEG_OPTIONS), after=lambda e: print(f'Song done:\n{e}')) # FIXME: Add volume command
+
+            # Wait until the song has finished playing
+            while voice.is_playing():
+                await asyncio.sleep(1)
+
+            if ytLinkQue.empty():
                 musicStop()
-                return
-
-        # Play Song
-        vc.play(discord.FFmpegPCMAudio(song, **ydl_opts), after=lambda e: print('done', e)) # FIXME: Add volume command
-
-        # Wait until the song has finished playing
-        while vc.is_playing():
-            await asyncio.sleep(1)
-    
-    await vc.disconnect()
-    musicStop()
+                await voice.disconnect()
+                print("Play cycle completed")
+                break
 
 
 # Creates embed

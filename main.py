@@ -20,7 +20,10 @@ intents = discord.Intents.all()
 client = commands.Bot(command_prefix='!', intents=intents)
 
 # Bot Discord ID    NOTE: -Not Sensitive-
-botId = 924079497412767844
+idDict = {
+    "client": 924079497412767844,
+    "frank": 264225001492840448,
+}
 
 # Global Variables
 pklfile_textChannel = "textChannel"
@@ -28,8 +31,8 @@ pklfile_maxQue = "maxQue"
 maxQue = 100
 textChannel = 0
 ytLinkQue = queue.Queue()
-mainEmbed = discord.Embed()
 currentlyPlaying = False
+voiceClient = None
 
 # Set up youtube_dl options for playing audio
 ydl_opts = {
@@ -54,7 +57,7 @@ async def on_ready():
 
     # Retrieve Max Que
     try:
-        maxQue = load(pklfile_maxQue)
+        maxQue = getMaxQue()
         print(f"Max que: {maxQue}")
     except FileNotFoundError as e:
         print("Unable to load Max Que. Default set to 100. New Pickle Dumped.")
@@ -88,6 +91,9 @@ async def que(ctx):
 async def set_channel(ctx):
     global textChannel
 
+    if ctx.message.author.id != idDict["frank"]:
+        await ctx.send(f"> Hol up, convince me that you're frank and I'll let you do the command.")
+
     textChannel = ctx.message.channel.id
     dump(textChannel, pklfile_textChannel)
 
@@ -103,7 +109,7 @@ async def set_max_que(ctx, m):
             m = int(m)
         except ValueError as e:
             print(f"WARNING: Max que attempted to be set to {m} by {ctx.author.display_name}.\nError:\n{e}")
-            await ctx.send(f"> Max que must be number `(0 for infinite)`, not `{m}`.")
+            await ctx.send(f"> Max que must be number `(0 for max)`, not `{m}`.")
             return
         
         # Check for bounds of que limit
@@ -127,7 +133,6 @@ async def set_max_que(ctx, m):
 async def on_message(message):
     global textChannel
     global ytLinkQue
-    global mainEmbed
 
     # Converts content to youtube link and adds to queue
     content = message.content
@@ -160,7 +165,6 @@ async def on_message(message):
     await client.process_commands(message)
 
 
-#
 # NOTE: Process of getting from query to que
 # Once a query get sent in bot channel (assuming its for music),
 # if its the first in the que, the message object is passed to play(),
@@ -170,51 +174,89 @@ async def on_message(message):
 # is called which takes the message to do all the playing stuff.
 # 
 # When it's done playing, currently playing is false
-#
 
 
 # Begins playing music | NOTE: play() will only get called when que is not empty and music is not playing
 async def play():
+    global voiceClient
+
     print("Play Called")
     musicPlay()
+
     # Get message object from initial request
     message = ytLinkQue.get_nowait()
     channel = message.author.voice.channel
-    voice = await channel.connect()
-    songsPlayed = 0
+    voiceClient = await channel.connect()
+    view = Menu()
     
     while True:
-        print("TOP OF WHILE")
-        # FIXME: Update embed here
-
         # Get current song
         currentSong = ytLinkQue.get_nowait()[0]
-        # print(f"Current song: {currentSong}")
+        defaultEmbed = generate_embed(update=True, message=message)
+        await message.channel.send(embed=defaultEmbed[0], files=[defaultEmbed[1]])
+        await message.channel.send(view=view)
 
         # Get song from Youtube
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            # song = ydl.download(currentSong)
-            # print("Extract Info")
             info = ydl.extract_info(currentSong, download=False)
             song = info['url']
 
             # Play Song
-            voice.play(discord.FFmpegPCMAudio(song, **FFMPEG_OPTIONS), after=lambda e: print(f'Song done:\n{e}')) # FIXME: Add volume command
+            voiceClient.play(discord.FFmpegPCMAudio(song, **FFMPEG_OPTIONS), after=lambda e: print(f'Song done'))
 
             # Wait until the song has finished playing
-            while voice.is_playing():
+            while voiceClient.is_playing() or voiceClient.is_paused():
                 await asyncio.sleep(1)
 
             if ytLinkQue.empty():
                 musicStop()
-                await voice.disconnect()
+                await voiceClient.disconnect()
                 print("Play cycle completed")
                 break
 
 
-# Creates embed
-def create_main_embed():
-    return
+# Sets up buttons for embed
+class Menu(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+        self.value = None
+
+    @discord.ui.button(label="Pause/Resume", style=discord.ButtonStyle.primary)
+    async def pauseAndResume(self, interaction: discord.Interaction, button: discord.ui.Button,):
+        await interaction.response.defer()
+        if voiceClient.is_paused():
+            resumeMusic()
+        else:
+            pauseMusic()
+    
+    @discord.ui.button(label="Stop", style=discord.ButtonStyle.danger)
+    async def stop(self, interaction: discord.Interaction, button: discord.ui.Button,):
+        await interaction.response.defer()
+        if voiceClient.is_playing():
+            stopMusic()
+
+
+# Creates / updates embed
+def generate_embed(*, update=False, message):
+    # Default embed with no arguments required
+    if message == None:
+            print("WARNING: Pass message object in generate_embed()")
+            return
+    
+    bannerFile=discord.File("img/banner.png", filename="banner.png")
+    thumbnailFile=discord.File("img/defaultThumbnail.png")
+
+    defaultEmbed=discord.Embed(title="Wall Music", color=0xd400ff)
+    defaultEmbed.set_image(url="attachment://banner.png")
+    defaultEmbed.set_footer(text=f"!set_channel -> set music channel | !set_max_que -> set max size of que\nTo que song, type the song in chat")
+    defaultEmbed.set_thumbnail(url="attachment://defaultThumbnail.png")
+
+    if not update:
+        return defaultEmbed, bannerFile, thumbnailFile
+    elif update: # FIXME: Make sure when len(defaultEmbed) >= 6000, shorten que field
+        defaultEmbed.set_thumbnail(url=message.author.display_avatar)
+        defaultEmbed.add_field(name="{ytVideoTitle}", value="By: {ytVideoAuthor}", inline=False)  # FIXME: when you scrape title and author
+        return defaultEmbed, bannerFile
 
 
 # Returns boolean if music is playing
@@ -236,7 +278,28 @@ def musicStop():
     currentlyPlaying = False
 
 
-# FOR PAUSE: https://discordpy.readthedocs.io/en/stable/api.html#discord.Message
+def pauseMusic():
+    global voiceClient
+
+    print("Pause Called")
+    voiceClient.pause()
+    return
+
+
+def resumeMusic():
+    global voiceClient
+
+    print("Resume Called")
+    voiceClient.resume()
+    return
+
+
+def stopMusic():
+    global voiceClient
+
+    print("Stop Called")
+    voiceClient.stop()
+    musicStop()
 
 
 # Pickle Dump
@@ -260,6 +323,10 @@ def load(file):
 # Returns set text channel for bot
 def getTextChannel():
     return load(pklfile_textChannel)
+
+
+def getMaxQue():
+    return load(pklfile_maxQue)
 
 
 # Converts query to youtube link   NOTE: could add functionality to optimize

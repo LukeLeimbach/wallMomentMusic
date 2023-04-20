@@ -33,6 +33,7 @@ currentlyPlaying = False
 voiceClient = None
 mainEmbed = None
 isLoop = False
+isSkip = False
 
 # Set up youtube_dl options for playing audio
 ydl_opts = {
@@ -76,19 +77,18 @@ async def on_ready():
     # textChannelObject = discord.uitls.get(textChannel)
     # await textChannelObject.send(embed=mainEmbed)
 
-    # Check every second for new music que
-    while True:
-        # If que is not empty and there is no music playing, play music
-        if not ytLinkQue.empty() and not isMusicPlaying():
-            await play()
-
-        await asyncio.sleep(1)
-
+#  DEBUG COMMANDS ================================================================
+@client.command()
+async def getinfo(ctx):
+    await ctx.send(f"Que size: {ytLinkQue.qsize()}")
+    await ctx.send(f"isLoop: {isLoop}")
+    await ctx.send(f"isSkip: {isSkip}")
 
 @client.command()
-async def getInfo(ctx):
-    await ctx.send(f"Que size: {ytLinkQue.qsize()}")
-    await ctx.send(f"Loop: {isLoop}")
+async def enableloop(ctx):
+    loopMusic()
+    await ctx.send(f"Loop Statis now: {isLoop}")
+#  DEBUG COMMANDS ================================================================
 
 
 # Sets channel ID and pickles it
@@ -99,7 +99,7 @@ async def set_channel(ctx):
     if ctx.message.author.id != idDict["frank"]:
         await ctx.send(f"> Hol up, convince me that you're frank and I'll let you do the command.")
 
-    textChannel = ctx.message.channel.id
+    textChannel = ctx.message.channel
     dump(textChannel, pklfile_textChannel)
 
     # FIXME: Can remove for production
@@ -160,7 +160,10 @@ async def on_message(message):
                     ytLink = queryToYtLink(content)
                     # await message.channel.send(ytLink)               # NOTE: added for testing
 
-                    ytLinkQue.put_nowait([ytLink, message])
+                    ytLinkQue.put([ytLink, message])
+
+                    if not ytLinkQue.empty() and not isMusicPlaying():
+                        await play()
 
     await client.process_commands(message)
 
@@ -181,18 +184,32 @@ async def play():
     global voiceClient
     global mainEmbed
     global isLoop
+    global isSkip
+
+    currentSongLink = None
 
     print("Play Called")
     musicPlay()
 
-    # Get message object from initial request
+    # Get message object from initial request and deque first song
+    firstCall = True
     currentSongLink, message = deque(reque=isLoop)
     channel = message.author.voice.channel
     voiceClient = await channel.connect()
     
     while True:
+        # Redundant check
         if not isMusicPlaying():
             break
+        
+        # deques music in while only after first call
+        if not firstCall:
+            currentSongLink, message = deque(reque=isLoop)
+
+        firstCall = False
+
+        # if currentSongLink is None:
+        #     continue
 
         # Get current song
         if not voiceClient.is_connected():
@@ -204,14 +221,22 @@ async def play():
             song = info['url']
 
             # Send embed message
-            mainEmbed = await send_embed(update=True, message=message, ytinfo=info)
+            if mainEmbed is None:
+                mainEmbed = await send_embed(update=False, message=message, ytinfo=info)
+            else:
+                await send_embed(update=True, message=message, ytinfo=info)
 
             # Play Song
             voiceClient.play(discord.FFmpegPCMAudio(song, **FFMPEG_OPTIONS), after=lambda e: print(f'Song done'))
 
             # Wait until the song has finished playing
             while voiceClient.is_playing() or voiceClient.is_paused():
+                if isSkip:
+                    voiceClient.stop()
+                    break
                 await asyncio.sleep(1)
+            
+            isSkip = False
 
             if ytLinkQue.empty():
                 musicStop()
@@ -234,10 +259,18 @@ class Menu(discord.ui.View):
         else:
             pauseMusic()
 
-    @discord.ui.button(label="Loop", style=discord.ButtonStyle.blurple, disabled=True)
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.blurple)
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button,):
+        await interaction.response.defer()
+        if isMusicPlaying():
+            skipMusic()
+        if voiceClient.is_paused():
+            resumeMusic()
+
+    @discord.ui.button(label="Loop", style=discord.ButtonStyle.blurple, disabled=False)
     async def loop(self, interaction: discord.Interaction, button: discord.ui.Button,):
         await interaction.response.defer()
-        # loopMusic()  # FIXME: When queing, message object is passed instead of song and 'channel = message.author.voice.channel' tries to read it
+        loopMusic()  # FIXME: When queing, message object is passed instead of song and 'channel = message.author.voice.channel' tries to read it
     
     @discord.ui.button(label="Stop", style=discord.ButtonStyle.red)
     async def stop(self, interaction: discord.Interaction, button: discord.ui.Button,):
@@ -249,6 +282,7 @@ class Menu(discord.ui.View):
 # Creates / updates embed
 async def send_embed(*, update=False, message=None, ytinfo=None):
     global mainEmbed
+
     # Default embed with no arguments required
     if message == None:
         print("WARNING: Pass message object in generate_embed()")
@@ -262,34 +296,29 @@ async def send_embed(*, update=False, message=None, ytinfo=None):
     defaultEmbed.set_image(url="attachment://banner.png")
     defaultEmbed.set_footer(text=f"!set_channel -> set music channel | !set_max_que -> set max size of que\nTo que song, type the song in chat")
     defaultEmbed.set_thumbnail(url="attachment://defaultThumbnail.png")
+    defaultEmbed.set_thumbnail(url=message.author.display_avatar) # When this is in on_ready(), it goes back to update
+    ytVideoTitle = ytinfo["title"]
+    ytVideoAuthor = ytinfo["channel"]
+    
+    defaultEmbed.add_field(name=f"{ytVideoTitle}", value=f"By: {ytVideoAuthor}", inline=False)
 
     if not update:
         embedMessage = await message.channel.send(embed=defaultEmbed, files=[bannerFile])
         await message.channel.send(view=view)
-        return defaultEmbed, bannerFile, thumbnailFile
-    elif update: # FIXME: Make sure when len(defaultEmbed) >= 6000, shorten que field
-        ytVideoTitle = ytinfo["title"]
-        ytVideoAuthor = ytinfo["channel"]
-        
-        defaultEmbed.set_thumbnail(url=message.author.display_avatar)
-        defaultEmbed.add_field(name=f"{ytVideoTitle}", value=f"By: {ytVideoAuthor}", inline=False)  # FIXME: when you scrape title and author
-        
-        embedMessage = await message.channel.send(embed=defaultEmbed, files=[bannerFile])
-        await message.channel.send(view=view)
         return embedMessage
+    elif update: # FIXME: Make sure when len(defaultEmbed) >= 6000, shorten que field    
+        await mainEmbed.edit(embed=defaultEmbed)
 
 
 # Returns boolean if music is playing
 def isMusicPlaying():
     return currentlyPlaying
 
-
 # Starts music playing
 def musicPlay():
     global currentlyPlaying
 
     currentlyPlaying = True
-
 
 # Stops music playing
 def musicStop():
@@ -328,10 +357,22 @@ def loopMusic():
     return
 
 
+def skipMusic():
+    global isSkip
+
+    print("Skip Called")
+    isSkip = True
+    return
+
+
 def deque(reque=False):
-    s = ytLinkQue.get_nowait()
+    global ytLinkQue
+
+    print("Deque Called")
+
+    s = ytLinkQue.get()
     if reque:
-        ytLinkQue.put_nowait(s)
+        ytLinkQue.put(s)
     return s
 
 

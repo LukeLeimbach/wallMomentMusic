@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 from discord.ext import commands
 from dotenv import load_dotenv
-# import yt_dlp as youtube_dl
 import yt_dlp as youtube_dl
 import discord
 import asyncio
@@ -9,7 +8,6 @@ import nacl
 import ffmpeg
 import os
 import pickle
-import threading
 import re
 import urllib.request
 import queue
@@ -29,10 +27,12 @@ idDict = {
 pklfile_textChannel = "textChannel"
 pklfile_maxQue = "maxQue"
 maxQue = 100
-textChannel = 0
+textChannel = None
 ytLinkQue = queue.Queue()
 currentlyPlaying = False
 voiceClient = None
+mainEmbed = None
+isLoop = False
 
 # Set up youtube_dl options for playing audio
 ydl_opts = {
@@ -54,6 +54,7 @@ FFMPEG_OPTIONS = {
 async def on_ready():
     global maxQue
     global textChannel
+    global mainEmbed
 
     # Retrieve Max Que
     try:
@@ -72,6 +73,9 @@ async def on_ready():
     
     print(f'{client.user} is ready.')
 
+    # textChannelObject = discord.uitls.get(textChannel)
+    # await textChannelObject.send(embed=mainEmbed)
+
     # Check every second for new music que
     while True:
         # If que is not empty and there is no music playing, play music
@@ -82,8 +86,9 @@ async def on_ready():
 
 
 @client.command()
-async def que(ctx):
-    await ctx.send(ytLinkQue.qsize())
+async def getInfo(ctx):
+    await ctx.send(f"Que size: {ytLinkQue.qsize()}")
+    await ctx.send(f"Loop: {isLoop}")
 
 
 # Sets channel ID and pickles it
@@ -179,6 +184,8 @@ async def on_message(message):
 # Begins playing music | NOTE: play() will only get called when que is not empty and music is not playing
 async def play():
     global voiceClient
+    global mainEmbed
+    global isLoop
 
     print("Play Called")
     musicPlay()
@@ -187,19 +194,21 @@ async def play():
     message = ytLinkQue.get_nowait()
     channel = message.author.voice.channel
     voiceClient = await channel.connect()
-    view = Menu()
     
     while True:
+        if not isMusicPlaying():
+            break
+
         # Get current song
-        currentSong = ytLinkQue.get_nowait()[0]
-        defaultEmbed = generate_embed(update=True, message=message)
-        await message.channel.send(embed=defaultEmbed[0], files=[defaultEmbed[1]])
-        await message.channel.send(view=view)
+        currentSongLink = deque(reque=isLoop)[0]
 
         # Get song from Youtube
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(currentSong, download=False)
+            info = ydl.extract_info(currentSongLink, download=False)
             song = info['url']
+
+            # Send embed message
+            mainEmbed = await send_embed(update=True, message=message, ytinfo=info)
 
             # Play Song
             voiceClient.play(discord.FFmpegPCMAudio(song, **FFMPEG_OPTIONS), after=lambda e: print(f'Song done'))
@@ -221,15 +230,20 @@ class Menu(discord.ui.View):
         super().__init__()
         self.value = None
 
-    @discord.ui.button(label="Pause/Resume", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Pause/Resume", style=discord.ButtonStyle.blurple)
     async def pauseAndResume(self, interaction: discord.Interaction, button: discord.ui.Button,):
         await interaction.response.defer()
         if voiceClient.is_paused():
             resumeMusic()
         else:
             pauseMusic()
+
+    @discord.ui.button(label="Loop", style=discord.ButtonStyle.blurple, disabled=True)
+    async def loop(self, interaction: discord.Interaction, button: discord.ui.Button,):
+        await interaction.response.defer()
+        # loopMusic()  # FIXME: When queing, message object is passed instead of song and 'channel = message.author.voice.channel' tries to read it
     
-    @discord.ui.button(label="Stop", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Stop", style=discord.ButtonStyle.red)
     async def stop(self, interaction: discord.Interaction, button: discord.ui.Button,):
         await interaction.response.defer()
         if voiceClient.is_playing():
@@ -237,12 +251,14 @@ class Menu(discord.ui.View):
 
 
 # Creates / updates embed
-def generate_embed(*, update=False, message):
+async def send_embed(*, update=False, message=None, ytinfo=None):
+    global mainEmbed
     # Default embed with no arguments required
     if message == None:
-            print("WARNING: Pass message object in generate_embed()")
-            return
+        print("WARNING: Pass message object in generate_embed()")
+        return
     
+    view = Menu()
     bannerFile=discord.File("img/banner.png", filename="banner.png")
     thumbnailFile=discord.File("img/defaultThumbnail.png")
 
@@ -252,11 +268,19 @@ def generate_embed(*, update=False, message):
     defaultEmbed.set_thumbnail(url="attachment://defaultThumbnail.png")
 
     if not update:
+        embedMessage = await message.channel.send(embed=defaultEmbed, files=[bannerFile])
+        await message.channel.send(view=view)
         return defaultEmbed, bannerFile, thumbnailFile
     elif update: # FIXME: Make sure when len(defaultEmbed) >= 6000, shorten que field
+        ytVideoTitle = ytinfo["title"]
+        ytVideoAuthor = ytinfo["channel"]
+        
         defaultEmbed.set_thumbnail(url=message.author.display_avatar)
-        defaultEmbed.add_field(name="{ytVideoTitle}", value="By: {ytVideoAuthor}", inline=False)  # FIXME: when you scrape title and author
-        return defaultEmbed, bannerFile
+        defaultEmbed.add_field(name=f"{ytVideoTitle}", value=f"By: {ytVideoAuthor}", inline=False)  # FIXME: when you scrape title and author
+        
+        embedMessage = await message.channel.send(embed=defaultEmbed, files=[bannerFile])
+        await message.channel.send(view=view)
+        return embedMessage
 
 
 # Returns boolean if music is playing
@@ -279,27 +303,40 @@ def musicStop():
 
 
 def pauseMusic():
-    global voiceClient
-
     print("Pause Called")
     voiceClient.pause()
     return
 
 
 def resumeMusic():
-    global voiceClient
-
     print("Resume Called")
     voiceClient.resume()
     return
 
 
 def stopMusic():
-    global voiceClient
-
     print("Stop Called")
-    voiceClient.stop()
     musicStop()
+    voiceClient.stop()
+    return
+
+
+def loopMusic():
+    global isLoop
+
+    print("Loop Called")
+    if isLoop:
+        isLoop = False
+    else:
+        isLoop = True
+    return
+
+
+def deque(reque=False):
+    s = ytLinkQue.get_nowait()
+    if reque:
+        ytLinkQue.put_nowait(s)
+    return s
 
 
 # Pickle Dump

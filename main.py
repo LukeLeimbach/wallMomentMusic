@@ -162,6 +162,8 @@ async def on_message(message):
 
                     ytLinkQue.put([ytLink, message])
 
+                    await message.delete(delay=0.5)
+
                     if not ytLinkQue.empty() and not isMusicPlaying():
                         await play()
 

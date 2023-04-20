@@ -156,16 +156,11 @@ async def on_message(message):
                     await message.channel.send(f"> {message.author.display_name}, you must be connected to a voice channel to add songs to the que.")
 
                 if voiceChannel is not None:
-                    # Passes this to play() if the que is empty and no music is playing
-                    if ytLinkQue.empty() and not isMusicPlaying():
-                        print("Passing message object")
-                        ytLinkQue.put_nowait(message)
-                    
                     # Adds youtube link to que as [link, author]
                     ytLink = queryToYtLink(content)
                     # await message.channel.send(ytLink)               # NOTE: added for testing
 
-                    ytLinkQue.put_nowait([ytLink, message.author])
+                    ytLinkQue.put_nowait([ytLink, message])
 
     await client.process_commands(message)
 
@@ -191,7 +186,7 @@ async def play():
     musicPlay()
 
     # Get message object from initial request
-    message = ytLinkQue.get_nowait()
+    currentSongLink, message = deque(reque=isLoop)
     channel = message.author.voice.channel
     voiceClient = await channel.connect()
     
@@ -200,7 +195,8 @@ async def play():
             break
 
         # Get current song
-        currentSongLink = deque(reque=isLoop)[0]
+        if not voiceClient.is_connected():
+            voiceClient = await channel.connect()
 
         # Get song from Youtube
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:

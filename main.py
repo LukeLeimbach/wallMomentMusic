@@ -250,11 +250,11 @@ async def play():
 # Sets up buttons for embed
 class Menu(discord.ui.View):
     def __init__(self):
-        super().__init__()
+        super().__init__(timeout=None)
         self.value = None
 
     @discord.ui.button(label="Pause/Resume", style=discord.ButtonStyle.blurple)
-    async def pauseAndResume(self, interaction: discord.Interaction, button: discord.ui.Button,):
+    async def pauseAndResume(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if voiceClient.is_paused():
             resumeMusic()
@@ -262,7 +262,7 @@ class Menu(discord.ui.View):
             pauseMusic()
 
     @discord.ui.button(label="Skip", style=discord.ButtonStyle.blurple)
-    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button,):
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if isMusicPlaying():
             skipMusic()
@@ -270,12 +270,12 @@ class Menu(discord.ui.View):
             resumeMusic()
 
     @discord.ui.button(label="Loop", style=discord.ButtonStyle.blurple, disabled=False)
-    async def loop(self, interaction: discord.Interaction, button: discord.ui.Button,):
+    async def loop(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         loopMusic()  # FIXME: When queing, message object is passed instead of song and 'channel = message.author.voice.channel' tries to read it
     
     @discord.ui.button(label="Stop", style=discord.ButtonStyle.red)
-    async def stop(self, interaction: discord.Interaction, button: discord.ui.Button,):
+    async def stop(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if voiceClient.is_playing():
             stopMusic()

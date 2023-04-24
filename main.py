@@ -72,10 +72,9 @@ async def on_ready():
     except FileNotFoundError as e:
         print("Unable to load Text Channel. A new text channel must be set.")
     
+    await getTextChannelObj().send("Working")
     print(f'{client.user} is ready.')
 
-    # textChannelObject = discord.uitls.get(textChannel)
-    # await textChannelObject.send(embed=mainEmbed)
 
 #  DEBUG COMMANDS ================================================================
 @client.command()
@@ -90,6 +89,8 @@ async def enableloop(ctx):
     await ctx.send(f"Loop Statis now: {isLoop}")
 #  DEBUG COMMANDS ================================================================
 
+def getTextChannelObj():
+    return client.get_channel(textChannel)
 
 # Sets channel ID and pickles it
 @client.command()
@@ -99,7 +100,7 @@ async def set_channel(ctx):
     if ctx.message.author.id != idDict["frank"]:
         await ctx.send(f"> Hol up, convince me that you're frank and I'll let you do the command.")
 
-    textChannel = ctx.message.channel
+    textChannel = ctx.message.channel.id
     dump(textChannel, pklfile_textChannel)
 
     # FIXME: Can remove for production

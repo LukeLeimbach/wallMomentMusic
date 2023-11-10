@@ -2,7 +2,7 @@
 
 A small scale music bot for the use in a private Discord server.
 
->>>set_channel sets the music channel that the bot will work in
+>!set_channel sets the music channel that the bot will work in
 
 Type any song name into said channel, and the bot will play the most relevant search on YouTube.
 Features include:
